@@ -1,11 +1,12 @@
 #include <gccore.h>
+#include <ogc/lwp_watchdog.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>
 #include <malloc.h>
 #include <sys/iosupport.h>
 
-// #define DEBUG_TO_FILE
+#define DEBUG_TO_FILE   // dev-disc-support: append every gprintf to sd:/debug.txt
 // #define WIFI_GECKO // don't keep this for released build
 
 #ifdef WIFI_GECKO
@@ -59,10 +60,17 @@ bool InitGecko()
 	{
 		usb_flush(EXI_CHANNEL_1);
 		geckoinit = true;
-		return true;
 	}
 
-	return false;
+	#ifdef DEBUG_TO_FILE
+	/* dev-disc-support: write a boot banner so it's obvious which session
+	 * any log line belongs to.  We append (not truncate) so a multi-boot
+	 * log keeps history. */
+	gprintf("\n===== usbloadergx dev-disc-support boot @ tick %u =====\n",
+	        (unsigned)gettick());
+	#endif
+
+	return geckoattached != 0;
 }
 
 char ascii(char s)

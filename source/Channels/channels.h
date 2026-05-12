@@ -42,6 +42,7 @@ public:
 	static u8 *GetTMD(const u64 &tid, u32 *size, const char *prefix);
 	static u8 *GetDol(const u64 &title, u8 *tmdBuffer, bool &isForwarder);
 	static u8 *GetOpeningBnr(const u64 &title, u32 *outsize, const char *prefix);
+	static bool Identify(const u64 &titleid, u8 *tmdBuffer, u32 tmdSize);
 
 	void GetChannelList();
 	void GetEmuChannelList(bool use_cache = false);
@@ -51,7 +52,6 @@ public:
 private:
 	static Channels *instance;
 
-	static bool Identify(const u64 &titleid, u8 *tmdBuffer, u32 tmdSize);
 	bool emuExists(char *tmdpath);
 
 	void InternalGetNandChannelList(u32 type);

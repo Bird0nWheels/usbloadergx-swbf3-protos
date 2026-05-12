@@ -28,6 +28,7 @@
 #include "Channels/channels.h"
 #include "usbloader/disc.h"
 #include "usbloader/apploader.h"
+#include "usbloader/swbf3_savestub_wad.h"
 #include "usbloader/usbstorage2.h"
 #include "usbloader/wdvd.h"
 #include "usbloader/GameList.h"
@@ -147,6 +148,46 @@ u32 GameBooter::BootPartition(char *dolpath, u8 videoselected, u8 alternatedol, 
 
 	/* Setup low memory */
 	Disc_SetLowMem(&gameHdr);
+	gprintf("Disc_SetLowMem done; gameID=%.6s\n", gameHdr.id);
+
+	/* SWBF3 dev builds save profile data to /title/00010000/30303030/data/
+	 * (the placeholder dev TID is hardcoded in the binary).  On retail Wii
+	 * ES enforces title-ownership ACLs on ISFS writes -- the running TID
+	 * must equal 00010000-30303030 for those writes to succeed.  The disc
+	 * launch path otherwise leaves the running TID as the loader's, so:
+	 *   1) re-init ISFS (the IOS reload above invalidated it),
+	 *   2) install an embedded fakesigned stub WAD if NAND doesn't already
+	 *      have title 00010000-30303030,
+	 *   3) call ES_Identify with that TMD so the running TID switches. */
+	if (memcmp(gameHdr.id, "RSBE3", 5) == 0)
+	{
+		s32 isfs_ret = ISFS_Initialize();
+		gprintf("SWBF3 pre-Identify ISFS_Initialize ret=%d\n", isfs_ret);
+
+		int instret = swbf3_savestub_install_if_missing();
+		gprintf("SWBF3 savestub_install_if_missing ret=%d\n", instret);
+
+		u8  *tmdBuffer = NULL;
+		u32  tmdSize   = 0;
+		int  lret = NandTitle::LoadFileFromNand(
+		                "/title/00010000/30303030/content/title.tmd",
+		                &tmdBuffer, &tmdSize);
+		gprintf("SWBF3 LoadFileFromNand(title.tmd) ret=%d size=%u\n",
+		        lret, tmdSize);
+		if (lret >= 0)
+		{
+			bool ok = Channels::Identify(
+			              0x0001000030303030ULL, tmdBuffer, tmdSize);
+			gprintf("SWBF3 ES_Identify(00010000-30303030) %s\n",
+			        ok ? "OK" : "FAILED");
+			free(tmdBuffer);
+		}
+		else
+		{
+			gprintf("SWBF3 ES_Identify skipped: TMD load failed (ret=%d)\n",
+			        lret);
+		}
+	}
 
 	/* Setup video mode */
 	Disc_SelectVMode(videoselected, false, NULL, NULL);
@@ -674,12 +715,16 @@ int GameBooter::BootGame(struct discHdr *gameHdr, const s8 useOcarina)
 	Channels::DestroyInstance();
 
 	//! Load main.dol or alternative dol into memory, start the game apploader and get game entrypoint
+	bool deferred_shutdown = false;
 	if (gameHeader.tid == 0)
 	{
 		gprintf("Game Boot\n");
 		AppEntrypoint = BootPartition(Settings.dolpath, videoChoice, alternatedol, alternatedoloffset, gameHeader);
-		// Reading of game is done we can close devices now
-		ShutDownDevices(usbport);
+		/* dev-disc-support: defer the per-disc ShutDownDevices until after
+		 * gamepatches() so its gprintf output (signature hits / clamps /
+		 * etc.) still lands in sd:/debug.txt.  The original early shutdown
+		 * unmounts SD before any of that runs and the log goes silent. */
+		deferred_shutdown = true;
 	}
 	else
 	{
@@ -764,6 +809,15 @@ int GameBooter::BootGame(struct discHdr *gameHdr, const s8 useOcarina)
 			gprintf("This image is already patched for Wiimmfi, no need to do so again.\n");
 			break;
 		}
+	}
+
+	//! Run the deferred ShutDownDevices now -- patches & code handler are
+	//! all in MEM1 and don't need SD/USB anymore, and any gprintf so far
+	//! has been flushed to sd:/debug.txt.
+	if (deferred_shutdown)
+	{
+		gprintf("Late ShutDownDevices (deferred from BootPartition)...\n");
+		ShutDownDevices(usbport);
 	}
 
 	//! Jump to the entrypoint of the game - the last function of the USB Loader

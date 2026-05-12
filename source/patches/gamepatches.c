@@ -140,6 +140,51 @@ void gamepatches(u8 videoSelected, u8 videoPatchDol, u8 aspectForce, u8 language
         do_wip_code(dst, len);
 
         anti_002_fix(dst, len);
+        /* Gate SWBF3 patches to discs whose ID starts with "RSBE3"
+         * (RSBE3A=r1.90431a, RSBE3B=r90776a, RSBE3C=r2.91120a).  The
+         * short 16-byte signatures (mem2-check, instant-action-null) can
+         * false-match unrelated `addis;cmplwi;bne;li` and `li -1;mr;bl;lwz`
+         * sequences in other discs' DOLs -- observed during development
+         * NOPing a real `bne` in an unrelated retail title.  The gate
+         * keeps these patches confined to the SWBF3 builds they target. */
+        if (memcmp((const void *)0x80000000, "RSBE3", 5) == 0)
+        {
+            /* Always-on patches needed just to reach the main menu /
+             * Instant Action UI. */
+            swbf3_mem2_check_fix(dst, len);
+            swbf3_instant_action_null_fix(dst, len);
+
+            /* Campaign-mode patches: defensible-only on the campaign
+             * code path, but they rewrite generic table getters
+             * (campaign_lookup_fix) and per-frame draw setups
+             * (transform_null_fix) that might also be used by other
+             * subsystems (e.g. profile save).  Opt-out for testing
+             * via an empty file:
+             *   sd:/SWBF3_INSTANT_ACTION_ONLY
+             * If that file exists, only the two always-on patches
+             * apply.  Useful to isolate save/profile-side behavior. */
+            {
+                char ia_only_path[64];
+                snprintf(ia_only_path, sizeof(ia_only_path),
+                         "sd:/SWBF3_INSTANT_ACTION_ONLY");
+                FILE *toggle = fopen(ia_only_path, "rb");
+                if (toggle)
+                {
+                    fclose(toggle);
+                    gprintf("SWBF3 campaign-mode patches DISABLED via %s\n",
+                            ia_only_path);
+                }
+                else
+                {
+                    gprintf("SWBF3 campaign-mode patches ENABLED (no %s toggle file)\n",
+                            ia_only_path);
+                    swbf3_campaign_lookup_fix(dst, len);
+                    swbf3_campaign_loop_fix(dst, len);
+                    swbf3_campaign_vec3_guard_fix(dst, len);
+                    swbf3_campaign_transform_null_fix(dst, len);
+                }
+            }
+        }
 
         if (!exclude_game((u8 *)0x80000000, false))
         {
@@ -229,6 +274,311 @@ void anti_002_fix(u8 *addr, u32 len)
         }
         addr_start += 4;
     }
+}
+
+/* Dev-disc support: Star Wars Battlefront 3 r2.91120a prototype.
+ *
+ * The dev-build's startup includes a check that compares a value
+ * obtained from a getter (observed via the surrounding code to be
+ * Mem2_Size, `*0x80003118`) against 0x08000000 (128 MB, the NDEV
+ * MEM2 budget) and takes one path if equal, another if not. The
+ * check sequence in main.dol at MEM1 addr 0x804A9920 is:
+ *
+ *     3C 03 F8 00   addis  r0, r3, -2048   ; r0 = r3 - 0x08000000
+ *     28 00 00 00   cmplwi r0, 0
+ *     40 82 00 0C   bne+   +0xC            ; r3 != 128 MB -> diverge
+ *     38 60 00 01   li     r3, 1           ; r3 = 1 (only when ==128 MB)
+ *
+ * On retail Wii (24+64 MB) the value never equals 128 MB and the
+ * `bne` is always taken, which leads to a path that prevents the
+ * game from completing boot. NOPing the `bne` makes the "==128 MB"
+ * arm always execute so the game keeps booting. We don't claim to
+ * know the author's intent for this check (debug assertion vs
+ * runtime sanity vs something else); the patch just removes the
+ * branch that diverges on retail hardware.
+ *
+ * The 16-byte signature is exact. Gating against the disc-ID prefix
+ * `RSBE3` in gamepatches() keeps it from running on any disc that
+ * isn't a SWBF3 dev build. */
+void swbf3_mem2_check_fix(u8 *addr, u32 len)
+{
+    static const u32 SearchPattern[4] = {
+        0x3C03F800,   /* addis r0, r3, -2048 */
+        0x28000000,   /* cmplwi r0, 0        */
+        0x4082000C,   /* bne+ +0xC           */
+        0x38600001,   /* li r3, 1            */
+    };
+    if (len < sizeof(SearchPattern)) return;
+    u8 *p = addr;
+    u8 *end = addr + len - sizeof(SearchPattern);
+    while (p <= end)
+    {
+        if (memcmp(p, SearchPattern, sizeof(SearchPattern)) == 0)
+        {
+            /* Replace the bne (offset +8 within the pattern) with nop. */
+            *((u32 *)(p + 8)) = 0x60000000;
+            gprintf("SWBF3 MEM2 size-check bne NOPed at %p (was bne+12 after r3-0x08000000 compare)\n",
+                    (void *)p);
+            return;
+        }
+        p += 4;
+    }
+}
+
+/* Dev-disc support: SWBF3 r2.91120a Instant-Action null-deref bypass.
+ *
+ * After the MEM2 size-check bne is bypassed, picking Instant Action triggers
+ * a chain of lookups that fail under retail's smaller MEM2 budget.
+ * The specific crash at PC=0x80254610 is:
+ *
+ *     3B 80 FF FF   li     r28, -1                ; sentinel: "no ID"
+ *     7F 83 E3 78   mr     r3, r28
+ *     4B DD 6E F9   bl     0x8002B504             ; lookup_by_id(-1) -> NULL
+ *     80 63 00 00   lwz    r3, 0(r3)              ; CRASH: deref NULL
+ *
+ * The lookup function explicitly returns NULL for id=-1 and the
+ * calling code never null-checks before dereferencing.  NOPing the
+ * lwz lets r3 stay NULL through the dead instruction; the next call
+ * either handles NULL or crashes again (next patch target).
+ *
+ * 16-byte signature is unique to SWBF3: the specific bl displacement
+ * 0x4BDD6EF9 only matches when the calling code is at exactly the
+ * right VA, which only happens for SWBF3 r2.91120a's main.dol. */
+void swbf3_instant_action_null_fix(u8 *addr, u32 len)
+{
+    static const u32 SearchPattern[4] = {
+        0x3B80FFFF,   /* li r28, -1                 */
+        0x7F83E378,   /* mr r3, r28                 */
+        0x4BDD6EF9,   /* bl 0x8002B504 (relative)   */
+        0x80630000,   /* lwz r3, 0(r3)              */
+    };
+    if (len < sizeof(SearchPattern)) return;
+    u8 *p = addr;
+    u8 *end = addr + len - sizeof(SearchPattern);
+    while (p <= end)
+    {
+        if (memcmp(p, SearchPattern, sizeof(SearchPattern)) == 0)
+        {
+            /* Replace the lwz (offset +12) with nop. */
+            *((u32 *)(p + 12)) = 0x60000000;
+            gprintf("SWBF3 instant-action null-deref NOPed at %p\n", (void *)(p + 12));
+            return;
+        }
+        p += 4;
+    }
+}
+
+/* Dev-disc support: SWBF3 r2.91120a Campaign-mode lookup-table crash.
+ *
+ * Picking Campaign reaches a chain that loads an object id from a stale
+ * struct slot, passes it through lookup_obj() at 0x8002B504, dereferences
+ * the returned pointer, and then calls one of two sibling leaf getters at
+ * 0x8039A04C / 0x8039A078.  Both leaves do:
+ *     return *(short*)(0x8081B2B8 + idx * 120 + N);   // N = 32 or 34
+ * Their only sanity check is `idx == -1`, so a garbage idx (e.g.
+ * 0x62b674da observed in a real crash, DAR == that value) wraps the
+ * mulli and produces an out-of-MEM1 address that faults on the lhz.
+ *
+ * Fix: replace the 12-byte prologue (addis/cmplwi/beq sentinel check)
+ * with an unsigned-magnitude check that rejects any idx > 0x40000.
+ * That covers -1 (0xFFFFFFFF unsigned) and every garbage pointer-shaped
+ * value while leaving every plausible game index untouched.  The branch
+ * target stays the same (the function's pre-existing "li r3,0; blr"
+ * tail at +36), so we don't need new safe space.
+ *
+ * The 24-byte search pattern matches both sibling leaves and only those
+ * (verified unique in the SWBF3 r2 main.dol). */
+void swbf3_campaign_lookup_fix(u8 *addr, u32 len)
+{
+    static const u32 SearchPattern[6] = {
+        0x3C030001,   /* addis r0, r3, 1              */
+        0x2800FFFF,   /* cmplwi r0, 0xFFFF             */
+        0x4182001C,   /* beq +28                       */
+        0x1C030078,   /* mulli r0, r3, 120             */
+        0x3C608082,   /* lis r3, 0x8082                */
+        0x3863B2B8,   /* addi r3, r3, -19784           */
+    };
+    static const u32 Replacement[3] = {
+        0x3C000004,   /* lis r0, 4    (r0 = 0x40000)   */
+        0x7C001840,   /* cmplw cr0, r0, r3             */
+        0x4180001C,   /* blt +28      (-> li r3,0;blr) */
+    };
+    if (len < sizeof(SearchPattern)) return;
+    u8 *p = addr;
+    u8 *end = addr + len - sizeof(SearchPattern);
+    while (p <= end)
+    {
+        if (memcmp(p, SearchPattern, sizeof(SearchPattern)) == 0)
+        {
+            memcpy(p, Replacement, sizeof(Replacement));
+            gprintf("SWBF3 campaign lookup hardened at %p\n", (void *)p);
+            p += sizeof(SearchPattern);
+            continue;
+        }
+        p += 4;
+    }
+}
+
+/* Dev-disc support: SWBF3 r2.91120a Campaign-mode vec3-copy crash.
+ *
+ * After hardening the inner leaf getters, campaign load progresses to
+ * the very end and then dies in a 3-float copy at 0x80006F0C with
+ * DAR == 0xC (NULL+12) -- caller passed a near-null destination buffer.
+ *
+ * The destination came in as r6 to the loop function at 0x80399A80,
+ * which sentinel-checks its r3 (entity id) only against -1 with the
+ * same addis/cmplwi/beq idiom as the leaves.  Garbage ids slip the
+ * check, the loop body computes &obj->vec_field for a NULL obj, and
+ * eventually invokes vec3_copy with that 0xC address.
+ *
+ * Apply the magnitude-check transform to that prologue (idx > 0x40000
+ * takes the existing exit branch instead).  The encoding mirrors
+ * swbf3_campaign_lookup_fix above; only the surrounding `or` saves
+ * differ, and the original beq +192 is rewritten to blt +192 so the
+ * function exits cleanly when the id is not real.
+ *
+ * 28-byte signature is unique: the bl displacement 0x480D4CF5 only
+ * matches when the call to the prologue-save helper is at exactly the
+ * right VA, which only happens for this specific function in
+ * SWBF3 r2.91120a's main.dol. */
+void swbf3_campaign_loop_fix(u8 *addr, u32 len)
+{
+    static const u32 SearchPattern[7] = {
+        0x480D4CF5,   /* bl +0xD4CF4   (prologue save helper) */
+        0x3C030001,   /* addis r0, r3, 1                      */
+        0x7C9D2378,   /* or r29, r4, r4                       */
+        0x2800FFFF,   /* cmplwi r0, 0xFFFF                     */
+        0x7CBE2B78,   /* or r30, r5, r5                       */
+        0x7CDF3378,   /* or r31, r6, r6                       */
+        0x418200C0,   /* beq +192                              */
+    };
+    if (len < sizeof(SearchPattern)) return;
+    u8 *p = addr;
+    u8 *end = addr + len - sizeof(SearchPattern);
+    while (p <= end)
+    {
+        if (memcmp(p, SearchPattern, sizeof(SearchPattern)) == 0)
+        {
+            *((u32 *)(p + 4))  = 0x3C000004;   /* lis r0, 4                     */
+            *((u32 *)(p + 12)) = 0x7C001840;   /* cmplw cr0, r0, r3              */
+            *((u32 *)(p + 24)) = 0x418000C0;   /* blt +192   (was beq +192)      */
+            gprintf("SWBF3 campaign loop hardened at %p\n", (void *)p);
+            return;
+        }
+        p += 4;
+    }
+}
+
+/* Dev-disc support: SWBF3 r2.91120a Campaign vec3-copy destination guard.
+ *
+ * The loop function at 0x80399A80 invokes vec3_copy(dst, src) twice per
+ * iteration (writing position and normal into caller-provided output
+ * buffers).  Each call site already has a `cmpwi rN, 0; beq skip` guard,
+ * but it only catches dst == NULL exactly.  In the failing campaign path
+ * the second buffer arrives as 0xC -- the result of taking
+ * &NULL_obj->vec_at_offset_12 in the caller -- which slips past the
+ * `beq` and crashes inside vec3_copy at 0x80006F0C with DAR == 0xC.
+ *
+ * Flip both `beq` to `bge`: signed-compare branches when the dst is
+ * non-negative, i.e. anything that isn't a real Wii pointer
+ * (0x80000000-0xFFFFFFFF look negative when signed).  Real pointers
+ * keep falling through to the copy; NULL/small-int garbage skips it.
+ *
+ * Two distinct sites; each signature is unique to one call (verified by
+ * scanning the SWBF3 r2 main.dol). */
+/* Dev-disc support: SWBF3 r2.91120a Campaign per-frame transform crash.
+ *
+ * Once the campaign level fully loads (loading bar full, black screen),
+ * the per-frame draw loop dies at 0x80254460 with DAR == 0xC.  Trace:
+ *
+ *     0x80254450  lwz   r5, 148(r31)         ; r5 = entity->xform_ptr
+ *     0x80254454  lis   r4, 0x8062
+ *     0x80254458  or    r29, r3, r3
+ *     0x8025445C  lfs   f3, -23136(r4)
+ *     0x80254460  lfs   f2, 12(r5)            ; CRASH (r5 is NULL)
+ *
+ * The same function already has a clean early-exit at 0x8025457C
+ * (reached via the existing `beq +320` at 0x8025443C when the entity
+ * id is -1).  Hijack two of the four setup instructions to add a
+ * "skip the draw if the transform pointer is null" gate that branches
+ * to the same exit:
+ *
+ *   0x80254454  lis r4, 0x8062     ->  cmpwi r5, 0
+ *   0x8025445C  lfs f3, -23136(r4) ->  beq  +0x120  (-> 0x8025457C)
+ *
+ * Cost: when r5 is non-null, the fall-through path executes with f3
+ * holding a stale value from the previous call (no longer freshly
+ * loaded from the constant pool); the next fmuls produces a wrong
+ * scalar but does not fault.  r4 is never read again before being
+ * reloaded later in the function.  Acceptable: the alternative is a
+ * hard crash on every frame.
+ *
+ * 16-byte signature is unique to this site in the SWBF3 r2 main.dol. */
+void swbf3_campaign_transform_null_fix(u8 *addr, u32 len)
+{
+    static const u32 SearchPattern[4] = {
+        0x80BF0094,   /* lwz r5, 148(r31)             */
+        0x3C808062,   /* lis r4, 0x8062                */
+        0x7C7D1B78,   /* or  r29, r3, r3               */
+        0xC064A5A0,   /* lfs f3, -23136(r4)            */
+    };
+    if (len < sizeof(SearchPattern)) return;
+    u8 *p = addr;
+    u8 *end = addr + len - sizeof(SearchPattern);
+    while (p <= end)
+    {
+        if (memcmp(p, SearchPattern, sizeof(SearchPattern)) == 0)
+        {
+            *((u32 *)(p +  4)) = 0x2C050000;  /* cmpwi r5, 0          */
+            *((u32 *)(p + 12)) = 0x41820120;  /* beq   +0x120 (exit)  */
+            gprintf("SWBF3 transform-null guard added at %p\n", (void *)p);
+            return;
+        }
+        p += 4;
+    }
+}
+
+void swbf3_campaign_vec3_guard_fix(u8 *addr, u32 len)
+{
+    static const u32 GuardA[4] = {
+        0x2C1E0000,   /* cmpwi r30, 0                          */
+        0x41820010,   /* beq +16                               */
+        0x7FC3F378,   /* or r3, r30, r30                       */
+        0x7EC4B378,   /* or r4, r22, r22                       */
+    };
+    static const u32 GuardB[5] = {
+        0x2C1F0000,   /* cmpwi r31, 0                          */
+        0x41820010,   /* beq +16                               */
+        0x7FE3FB78,   /* or r3, r31, r31                       */
+        0x3896000C,   /* addi r4, r22, 12                      */
+        0x4BC6D3CD,   /* bl 0x80006F00 (vec3_copy)             */
+    };
+    if (len < sizeof(GuardB)) return;
+    u8 *p = addr;
+    u8 *end_a = addr + len - sizeof(GuardA);
+    u8 *end_b = addr + len - sizeof(GuardB);
+    int hits = 0;
+    for (p = addr; p <= end_a; p += 4)
+    {
+        if (memcmp(p, GuardA, sizeof(GuardA)) == 0)
+        {
+            *((u32 *)(p + 4)) = 0x40800010;   /* bge +16 (was beq +16) */
+            gprintf("SWBF3 vec3 guard A hardened at %p\n", (void *)p);
+            hits++;
+            break;
+        }
+    }
+    for (p = addr; p <= end_b; p += 4)
+    {
+        if (memcmp(p, GuardB, sizeof(GuardB)) == 0)
+        {
+            *((u32 *)(p + 4)) = 0x40800010;   /* bge +16 (was beq +16) */
+            gprintf("SWBF3 vec3 guard B hardened at %p\n", (void *)p);
+            hits++;
+            break;
+        }
+    }
+    (void)hits;
 }
 
 u8 *find_safe_space(u8 *addr, u32 len)

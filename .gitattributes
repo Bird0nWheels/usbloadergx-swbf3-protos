@@ -7,3 +7,15 @@ makefile text eol=lf
 *.ogg binary
 *.bin binary
 *.bnr binary
+
+# Fork additions: .bat files MUST keep CRLF or Windows cmd.exe will silently
+# mis-parse them. Mark them `binary` so git stores the bytes verbatim --
+# this is what gets served on GitHub's raw-file URL too, which a `text
+# eol=crlf` rule alone wouldn't fix.
+*.bat       binary
+*.cmd       binary
+
+# Tools/-shipped docs: pin to CRLF on checkout so they're readable in
+# Notepad when a Windows user double-clicks them.
+tools/**/*.txt  text eol=crlf
+tools/**/*.md   text eol=crlf
