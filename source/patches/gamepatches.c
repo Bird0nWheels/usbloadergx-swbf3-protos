@@ -149,41 +149,12 @@ void gamepatches(u8 videoSelected, u8 videoPatchDol, u8 aspectForce, u8 language
          * keeps these patches confined to the SWBF3 builds they target. */
         if (memcmp((const void *)0x80000000, "RSBE3", 5) == 0)
         {
-            /* Always-on patches needed just to reach the main menu /
-             * Instant Action UI. */
             swbf3_mem2_check_fix(dst, len);
             swbf3_instant_action_null_fix(dst, len);
-
-            /* Campaign-mode patches: defensible-only on the campaign
-             * code path, but they rewrite generic table getters
-             * (campaign_lookup_fix) and per-frame draw setups
-             * (transform_null_fix) that might also be used by other
-             * subsystems (e.g. profile save).  Opt-out for testing
-             * via an empty file:
-             *   sd:/SWBF3_INSTANT_ACTION_ONLY
-             * If that file exists, only the two always-on patches
-             * apply.  Useful to isolate save/profile-side behavior. */
-            {
-                char ia_only_path[64];
-                snprintf(ia_only_path, sizeof(ia_only_path),
-                         "sd:/SWBF3_INSTANT_ACTION_ONLY");
-                FILE *toggle = fopen(ia_only_path, "rb");
-                if (toggle)
-                {
-                    fclose(toggle);
-                    gprintf("SWBF3 campaign-mode patches DISABLED via %s\n",
-                            ia_only_path);
-                }
-                else
-                {
-                    gprintf("SWBF3 campaign-mode patches ENABLED (no %s toggle file)\n",
-                            ia_only_path);
-                    swbf3_campaign_lookup_fix(dst, len);
-                    swbf3_campaign_loop_fix(dst, len);
-                    swbf3_campaign_vec3_guard_fix(dst, len);
-                    swbf3_campaign_transform_null_fix(dst, len);
-                }
-            }
+            swbf3_campaign_lookup_fix(dst, len);
+            swbf3_campaign_loop_fix(dst, len);
+            swbf3_campaign_vec3_guard_fix(dst, len);
+            swbf3_campaign_transform_null_fix(dst, len);
         }
 
         if (!exclude_game((u8 *)0x80000000, false))
