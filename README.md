@@ -51,12 +51,6 @@ If profile-save doesn't work after that, see
 [`debug.txt`](#logging) on the SD root — every step the loader takes
 is logged there.
 
-> **Optional opt-out toggle.** Dropping an empty file
-> `sd:/SWBF3_INSTANT_ACTION_ONLY` on the SD root disables the four
-> campaign-mode runtime patches (the two always-on patches still
-> apply). Useful for isolating an instant-action-only failure from a
-> campaign-only failure; not normally needed.
-
 ---
 
 ## Scope and what's actually been tested
@@ -150,9 +144,6 @@ in `source/patches/gamepatches.c:149`. The gate exists because one of
 the patches' 16-byte signatures was observed false-matching inside an
 unrelated retail game's compiled DOL during development, NOPing a real
 `bne` and producing a silent black-screen boot. The gate stops that.
-The four campaign-mode
-patches are additionally bypassed by a `sd:/SWBF3_INSTANT_ACTION_ONLY`
-opt-out file.
 
 | Function | What it does |
 |----------|--------------|
