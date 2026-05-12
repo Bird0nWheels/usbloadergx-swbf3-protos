@@ -1,0 +1,23 @@
+Tool download notice
+====================
+
+This script can download two third-party command-line tools, both
+GPL-2-or-later:
+
+  * rvthtool v2.0.1 -- David Korth / GerbilSoft.
+    https://stuff.gerbilsoft.com/.rvt/rvthtool_2.0.1-win64.zip
+    (~12 MB)
+
+  * wit (Wiimms ISO Tool) v3.05a r8638 cygwin64 -- Dirk Clemens / Wiimm.
+    https://wit.wiimm.de/download/wit-v3.05a-r8638-cygwin64.zip
+    (~10 MB)
+
+If either is already on your PATH, it will be detected and the
+corresponding download is skipped.
+
+Downloads are unpacked into the local "tools\" subfolder next to this
+script and invoked as separate processes. They are not modified,
+repackaged, or redistributed by this project. License text travels
+inside the downloads.
+
+Type YES to proceed, anything else to cancel.
