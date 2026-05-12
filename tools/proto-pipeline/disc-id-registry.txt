@@ -1,0 +1,21 @@
+Wii proto disc-ID registry
+Format (pipe-delimited; lines starting with '#' are comments):
+
+  GAMEID | Friendly folder name | Short title (<= 30 chars)
+
+The 'Friendly folder name' is the human-readable prefix used in the WBFS
+folder path; USB Loader GX expects ' [GAMEID]' suffix to follow it. The
+'Short title' is what shows on the in-loader game tile.
+
+This shipped registry only lists builds that REQUIRE this fork's runtime
+patches. Other Wii prototypes (e.g. various dev builds of retail-released
+games) generally boot on STOCK USB Loader GX once they're rvthtool retail-
+recrypted and wit-repacked -- you just need a unique 6-char disc ID. Pick
+any free ID in the standard Wii format (1st char R for single-layer or
+S for dual-layer, then a 3-char game code + a 2-char proto suffix).
+
+# ----- registry -----
+
+RSBE3A | Star Wars Battlefront 3 r1.90431a | SW Battlefront 3 r1.90431a
+RSBE3B | Star Wars Battlefront 3 r90776a   | SW Battlefront 3 r90776a
+RSBE3C | Star Wars Battlefront 3 r2.91120a (Nov21st 2008) | SW Battlefront 3 r2.91120a
