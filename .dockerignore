@@ -1,0 +1,8 @@
+build/
+boot.dol
+boot.elf
+usbloader_gx/
+usbloader_gx.zip
+usbloadergx-swbf3-protos-*.zip
+.git/
+docs/

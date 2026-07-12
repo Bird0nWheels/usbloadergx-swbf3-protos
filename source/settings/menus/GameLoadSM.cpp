@@ -267,6 +267,7 @@ void GameLoadSM::SetOptionNames()
 	}
 	Options->SetName(Idx++, "%s", tr( "Hooktype" ));
 	Options->SetName(Idx++, "%s", tr( "Wiird Debugger" ));
+	Options->SetName(Idx++, "%s", tr( "USB Gecko TTY" ));
 	Options->SetName(Idx++, "%s", tr( "Disable Wiimote Motor" ));
 	Options->SetName(Idx++, "%s", tr( "Disable Wiimote Speaker" ));
 	//! Only on Wii games
@@ -449,6 +450,9 @@ void GameLoadSM::SetOptionValues()
 		Options->SetValue(Idx++, tr("Use global"));
 	else
 		Options->SetValue(Idx++, "%s", tr( OnOffText[GameConfig.WiirdDebugger] ));
+
+	//! Settings: USB Gecko TTY (per-game)
+	Options->SetValue(Idx++, "%s", tr( OnOffText[GameConfig.USBGeckoTTY ? ON : OFF] ));
 
 	//! Settings: Disable Wiimote Motor
 	if (GameConfig.wpadMotor == INHERIT)
@@ -740,6 +744,12 @@ int GameLoadSM::GetMenuInternal()
 	else if (ret == ++Idx)
 	{
 		if (++GameConfig.WiirdDebugger >= MAX_ON_OFF) GameConfig.WiirdDebugger = INHERIT;
+	}
+
+	//! Settings: USB Gecko TTY (simple ON/OFF, no INHERIT — default OFF)
+	else if (ret == ++Idx)
+	{
+		GameConfig.USBGeckoTTY = GameConfig.USBGeckoTTY ? OFF : ON;
 	}
 
 	//! Settings: Disable Wiimote Motor

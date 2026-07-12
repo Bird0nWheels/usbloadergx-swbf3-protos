@@ -214,8 +214,33 @@ void Disc_SelectVMode(u8 videoselected, bool devolution, u32 *dml_VideoMode, u32
 
 void Disc_SetVMode(void)
 {
+	/* SWBF3 r2.91120a (RSBE3*) PAL-crash workaround.
+	 *
+	 * Game's heap layout leaves only 24 bytes between all_root top
+	 * (0x97e2ffe8) and nav heap base (0x97e30000).  When the game sees
+	 * Video_Mode = VI_PAL/VI_EURGB60 it allocates a 528-line framebuffer
+	 * (~60 KB larger than NTSC 480), overflows nav, and dies at
+	 * SRR0=0x803a3800 in the nav allocator (DAR=0xfffffff8).
+	 *
+	 * Earlier attempts to write Video_Mode = 0 from gamepatches() were
+	 * clobbered because Disc_SetVMode runs AGAIN from Disc_JumpToEntrypoint
+	 * (the final hop before launching the game).  Force the override here,
+	 * at the actual write site, so it can't be undone.  VI is still
+	 * configured to the user's chosen PAL rmode via VIDEO_Configure(rmode)
+	 * below -- PAL Wii hardware drives a real PAL signal, game just thinks
+	 * it's in NTSC for sizing purposes.  The DOL's NTSC rmode has also been
+	 * patched to a Franken-rmode (PAL viTVMode + NTSC dimensions) by
+	 * patch_videomode, so VIDEO_Configure calls by the game keep that PAL
+	 * timing without growing buffers. */
+	u32 effective_reg = rmode_reg;
+	if (memcmp((const void *)0x80000000, "RSBE3", 5) == 0 && effective_reg != 0)
+	{
+		gprintf("SWBF3 Disc_SetVMode: overriding Video_Mode write 0x%x -> 0 (NTSC) to keep framebuffer at 480 lines; VI still configured PAL via rmode.\n", effective_reg);
+		effective_reg = 0; /* VI_NTSC */
+	}
+
 	/* Set video mode register */
-	*Video_Mode = rmode_reg;
+	*Video_Mode = effective_reg;
 	DCFlushRange((void *) Video_Mode, 4);
 
 	/* Set video mode */

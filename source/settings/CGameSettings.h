@@ -79,6 +79,7 @@ typedef struct _GameCFG
 	short PrivateServer;
 	std::string CustomAddress;
 	short Locked;
+	short USBGeckoTTY;   /* OFF / ON / INHERIT — enables USB Gecko output for this game */
 
 	void operator=(const struct _GameCFG &game)
 	{
@@ -152,6 +153,7 @@ typedef struct _GameCFG
 		this->PrivateServer = game.PrivateServer;
 		this->CustomAddress = game.CustomAddress;
 		this->Locked = game.Locked;
+		this->USBGeckoTTY = game.USBGeckoTTY;
 	}
 } GameCFG;
 

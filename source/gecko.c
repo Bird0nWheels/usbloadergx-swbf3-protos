@@ -20,6 +20,8 @@ static bool geckoinit = false;
 
 void gprintf(const char *format, ...)
 {
+	/* If nothing is listening (no file-logging AND no gecko AND no wifi),
+	 * skip the sprintf entirely. */
 	#ifndef DEBUG_TO_FILE
 		#ifndef WIFI_GECKO
 		if (!geckoinit)
@@ -42,10 +44,13 @@ void gprintf(const char *format, ...)
 			fwrite(stringBuf, 1, strlen(stringBuf), debugF);
 			fclose(debugF);
 		}
-		#else
-		usb_sendbuffer(1, stringBuf, len);
 		#endif
-		
+
+		/* Gecko-TTY output. Opt-in: only fires if InitGecko() found the
+		 * marker file `sd:/USBGECKO_TTY_ON` AND a live USB Gecko on EXI1. */
+		if (geckoinit)
+			usb_sendbuffer(1, stringBuf, len);
+
 		#ifdef WIFI_GECKO
 		wifi_printf(stringBuf);
 		#endif
@@ -53,8 +58,26 @@ void gprintf(const char *format, ...)
 	va_end(va);
 }
 
+/* Gecko-TTY is per-game opt-in (see GameCFG.USBGeckoTTY and the toggle in
+ * the game-settings menu). InitGecko() is a no-op at USBLoaderGX startup;
+ * EnableGeckoTTY(true) is called just before a game boots when the resolved
+ * per-game setting is ON. That way boot-time gprintf during patch application
+ * is captured for the specific games the user opted in for, while machines
+ * without a Gecko attached (or games without the toggle) never touch EXI1. */
 bool InitGecko()
 {
+	return false;
+}
+
+void EnableGeckoTTY(int on)
+{
+	if (!on)
+	{
+		geckoinit = false;
+		return;
+	}
+	if (geckoinit)
+		return;
 	u32 geckoattached = usb_isgeckoalive(EXI_CHANNEL_1);
 	if (geckoattached)
 	{
@@ -69,8 +92,6 @@ bool InitGecko()
 	gprintf("\n===== usbloadergx dev-disc-support boot @ tick %u =====\n",
 	        (unsigned)gettick());
 	#endif
-
-	return geckoattached != 0;
 }
 
 char ascii(char s)
@@ -155,6 +176,13 @@ static const devoptab_t gecko_out = {
 
 void USBGeckoOutput()
 {
+	/* Only redirect stdout/stderr to the gecko devoptab when gecko was
+	 * actually opted-in AND initialised (see InitGecko's marker check).
+	 * Otherwise every printf/fprintf would call usb_sendbuffer to a
+	 * non-existent EXI1 device, which is wasteful and can be misleading
+	 * to debug output tooling. */
+	if (!geckoinit)
+		return;
 	devoptab_list[STD_OUT] = &gecko_out;
 	devoptab_list[STD_ERR] = &gecko_out;
 }

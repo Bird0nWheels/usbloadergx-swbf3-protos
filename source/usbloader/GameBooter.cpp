@@ -56,6 +56,7 @@
 #include "GameBooter.hpp"
 #include "NandEmu.h"
 #include "SavePath.h"
+#include "gecko.h"
 #include "sys.h"
 #include "FileOperations/fileops.h"
 #include "prompts/ProgressWindow.h"
@@ -336,6 +337,19 @@ int GameBooter::BootGame(struct discHdr *gameHdr, const s8 useOcarina)
 
 	//! Setup game configuration from game settings. If no game settings exist use global/default.
 	GameCFG *game_cfg = GameSettings.GetGameCFG(gameHeader.id);
+	/* Per-game USB Gecko TTY:
+	 * 1. EnableGeckoTTY() / USBGeckoOutput() so USBLoaderGX's own gprintf +
+	 *    stdout/stderr flow to the gecko during boot patching.
+	 * 2. GeckoTTYEnabled = 1 tells gamepatches() to install the game-side
+	 *    OSReport/vprintf-to-gecko hook (gecko_tty_universal_patch, and the
+	 *    per-game fallback hooks) so the LOADED GAME's own OSReport/printf
+	 *    output ALSO streams to the gecko. Both must be set before
+	 *    gamepatches() runs later in this function. */
+	int usbGeckoTTYOn = (game_cfg->USBGeckoTTY == ON) ? 1 : 0;
+	EnableGeckoTTY(usbGeckoTTYOn);
+	if (usbGeckoTTYOn)
+		USBGeckoOutput();
+	GeckoTTYEnabled = usbGeckoTTYOn;
 	u8 videoChoice = game_cfg->video == INHERIT ? Settings.videomode : game_cfg->video;
 	u8 videoPatchDolChoice = game_cfg->videoPatchDol == INHERIT ? Settings.videoPatchDol : game_cfg->videoPatchDol;
 	u8 patchFix480pChoice = game_cfg->patchFix480p == INHERIT ? Settings.patchFix480p : game_cfg->patchFix480p;
